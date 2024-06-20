@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,7 +22,7 @@ var dict = Dictionary{
 	Words: make(map[string]string),
 }
 
-func addWordHandler(w http.ResponseWriter, r *http.Request) {
+func AddWordHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
@@ -40,7 +42,7 @@ func addWordHandler(w http.ResponseWriter, r *http.Request) {
 	defer dict.mu.Unlock()
 
 	dict.Words[req.Word] = req.Definition
-	slog.Debug("Got new record", dict.Words)
+	// slog.Info("New dictionary record received - ", dict.Words)
 
 	slog.Debug("Saving started")
 	if err := saveDictionary(); err != nil {
@@ -52,20 +54,54 @@ func addWordHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func getWordsHandler(w http.ResponseWriter, r *http.Request) {
+func DeleteWordHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
+
+	var delete_word struct {
+		Word string `json:"word"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&delete_word); err != nil {
+		fmt.Println(r.Body)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	// slog.Info("Word for delete received - ", delete_word.Word)
+
+	dict.mu.Lock()
+	defer dict.mu.Unlock()
+
+	delete(dict.Words, delete_word.Word)
+
+	slog.Debug("Saving started")
+	if err := saveDictionary(); err != nil {
+		http.Error(w, "Error saving dictionary", http.StatusInternalServerError)
+		return
+	}
+	slog.Debug("Saving complite")
+
+	w.WriteHeader(http.StatusOK)
+
+}
+
+func GetWordsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
 	dict.mu.Lock()
 	defer dict.mu.Unlock()
 
 	json.NewEncoder(w).Encode(dict.Words)
-	slog.Debug("Whole dictionary was send")
+	slog.Debug("The entire dictionary has been sent")
 }
 
-func getWordsByLetterHandler(w http.ResponseWriter, r *http.Request) {
+func GetWordsByLetterHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
@@ -76,7 +112,7 @@ func getWordsByLetterHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Letter query parameter is required", http.StatusBadRequest)
 		return
 	}
-	slog.Debug("Got letter", letter)
+	// slog.Debug("Letter received - ", letter)
 
 	letter = strings.ToLower(letter)
 
@@ -91,23 +127,31 @@ func getWordsByLetterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(filteredWords)
-	slog.Info("Filter dictionary was send")
+	slog.Info("Filter dictionary has been send")
 }
 
-func loadDictionary() error {
-	dict.mu.Lock()
-	defer dict.mu.Unlock()
-
+func readDictionary() (map[string]string, error) {
 	file, err := os.Open(dictionaryFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // файл не существует, это не ошибка
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 	defer file.Close()
 
-	return json.NewDecoder(file).Decode(&dict.Words)
+	byteValue, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]string
+	err = json.Unmarshal(byteValue, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 func saveDictionary() error {
@@ -121,18 +165,22 @@ func saveDictionary() error {
 }
 
 func main() {
-	if err := loadDictionary(); err != nil {
+	loadedDict, err := readDictionary()
+	if err != nil {
 		slog.Error("Error loading dictionary:", err)
+	} else if loadedDict != nil {
+		dict.Words = loadedDict
+		slog.Info("Dictionary loaded successfully")
 	}
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("/add", addWordHandler)
-	mux.HandleFunc("/get", getWordsHandler)
-	mux.HandleFunc("/get-by-letter", getWordsByLetterHandler)
+	mux.HandleFunc("/add", AddWordHandler)
+	mux.HandleFunc("/delete", DeleteWordHandler)
+	mux.HandleFunc("/get", GetWordsHandler)
+	mux.HandleFunc("/get-by-letter", GetWordsByLetterHandler)
 
 	slog.Info("Starting server at port 8080")
 
-	err := http.ListenAndServe(":8080", mux)
+	err = http.ListenAndServe(":8080", mux)
 	if err != nil {
 		panic(err)
 	}
