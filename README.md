@@ -2,7 +2,7 @@
 A simple dictionary server written in Go.
 
 ### What is this for?
-I often read books and I have to write down a lot of new words. My notes are already full and I don’t like the format of writing in them at all. So I thought, why not write an online dictionary that will store the words that I have read?
+I often read books and I have to write down a lot of new words. My notes are already full and I don’t like the format of writing in them at all. So I thought, why not design an online dictionary that will store the words that I have read?
 
 ### List of endpoints:
 
